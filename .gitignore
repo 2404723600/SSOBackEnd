@@ -1,37 +1,32 @@
-```gitignore
+```
 # Build artifacts
+bin/
+obj/
 *.dll
 *.exe
 *.pdb
 *.config
-bin/
-obj/
-out/
 
 # Dependencies
 packages/
 node_modules/
-.nuget/
-.nyc_output/
-coverage/
+bower_components/
 
 # Logs
 *.log
-logs/
 
 # Environment
 .env
 .env.local
-.env.*
+*.env.*
 
 # Editors
-.vs/
+.vscode/
 .idea/
 *.userprefs
 *.user
-.vscode/
 
-# OS
+# OS generated files
 .DS_Store
 Thumbs.db
 ```
