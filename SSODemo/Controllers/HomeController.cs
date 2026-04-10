@@ -50,12 +50,37 @@ public class HomeController : Controller
 
     public async Task<IActionResult> Logout()
     {
+        var logger = _logger;
+        
         // 构建 Keycloak 登出 URL
         var authority = _configuration.GetSection("Keycloak")["Authority"];
         var logoutUrl = $"{authority}/protocol/openid-connect/logout";
         
         // 获取 id_token_hint (从用户 Claims 中获取)
         var idTokenHint = User.FindFirst("id_token")?.Value;
+        
+        // 如果 Claims 中没有，尝试从 Auth Properties 中获取（SaveTokens=true 时保存）
+        if (string.IsNullOrEmpty(idTokenHint))
+        {
+            var authResult = await HttpContext.AuthenticateAsync(CookieAuthenticationDefaults.AuthenticationScheme);
+            if (authResult.Properties != null)
+            {
+                idTokenHint = authResult.Properties.GetTokenValue("id_token");
+                if (!string.IsNullOrEmpty(idTokenHint))
+                {
+                    logger.LogInformation("IdToken retrieved from Auth Properties");
+                }
+            }
+        }
+        
+        if (string.IsNullOrEmpty(idTokenHint))
+        {
+            logger.LogWarning("id_token not found. Logout may not work properly with Keycloak.");
+        }
+        else
+        {
+            logger.LogInformation("id_token found, length: {Length}", idTokenHint.Length);
+        }
         
         // 清除本地 Cookie
         await HttpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
@@ -70,6 +95,9 @@ public class HomeController : Controller
         {
             keycloakLogoutUrl += $"&id_token_hint={Uri.EscapeDataString(idTokenHint)}";
         }
+        
+        logger.LogInformation("Redirecting to Keycloak logout URL with id_token_hint: {HasHint}, redirect_uri: {RedirectUri}", 
+            !string.IsNullOrEmpty(idTokenHint), redirectUri);
         
         return Redirect(keycloakLogoutUrl);
     }

@@ -87,28 +87,20 @@ builder.Services.AddAuthentication(options =>
             var logger = context.HttpContext.RequestServices.GetRequiredService<ILogger<Program>>();
             logger.LogInformation("Token validated for user: {Name}", context.Principal?.Identity?.Name);
             
-            // 尝试多种方式获取 id_token
-            string? idToken = null;
+            // 尝试从 ProtocolMessage 获取 id_token（某些情况下可用）
+            string? idToken = context.ProtocolMessage?.IdToken;
             
-            // 方法 1: 从 ProtocolMessage 获取
-            if (!string.IsNullOrEmpty(context.ProtocolMessage?.IdToken))
+            if (!string.IsNullOrEmpty(idToken))
             {
-                idToken = context.ProtocolMessage.IdToken;
                 logger.LogInformation("IdToken found in ProtocolMessage");
             }
-            // 方法 2: 从保存的 tokens 中获取 (因为设置了 SaveTokens = true)
             else
             {
-                idToken = context.HttpContext.User.FindFirst("id_token")?.Value;
-                if (string.IsNullOrEmpty(idToken))
-                {
-                    var accessToken = context.HttpContext.User.FindFirst("access_token")?.Value;
-                    logger.LogInformation($"Access token present: {!string.IsNullOrEmpty(accessToken)}");
-                }
+                // 如果 ProtocolMessage 中没有，尝试从 TokenEndpointResponse 获取
+                // 注意：在 TokenValidated 阶段，TokenEndpointResponse 可能已经处理过了
+                // 所以主要依赖 SaveTokens=true 自动保存到 Properties 中
+                logger.LogInformation("IdToken not in ProtocolMessage, will rely on SaveTokens mechanism");
             }
-            
-            // 如果还是没找到，尝试从 TokenEndpointResponse 获取（仅在授权码流程中可用）
-            // 注意：这需要在 OnAuthorizationCodeReceived 中处理
             
             if (!string.IsNullOrEmpty(idToken))
             {
@@ -125,10 +117,6 @@ builder.Services.AddAuthentication(options =>
                     logger.LogInformation("IdToken added to claims successfully");
                 }
             }
-            else
-            {
-                logger.LogWarning("IdToken not found in any source. Logout may not work properly with Keycloak.");
-            }
             
             return Task.CompletedTask;
         },
@@ -136,13 +124,15 @@ builder.Services.AddAuthentication(options =>
         {
             var logger = context.HttpContext.RequestServices.GetRequiredService<ILogger<Program>>();
             
-            // 在授权码接收阶段，我们可以从 TokenEndpointResponse 获取 id_token
+            // 在授权码接收阶段，从 TokenEndpointResponse 获取 id_token
             var idToken = context.TokenEndpointResponse?.IdToken;
             
             if (!string.IsNullOrEmpty(idToken))
             {
-                logger.LogInformation("IdToken captured from TokenEndpointResponse");
+                logger.LogInformation("IdToken captured from TokenEndpointResponse: {IdTokenPrefix}", 
+                    idToken.Length > 20 ? idToken.Substring(0, 20) + "..." : idToken);
                 
+                // 将 id_token 添加到 Claims 中，以便后续登出时使用
                 var claimsIdentity = context.Principal?.Identity as ClaimsIdentity;
                 if (claimsIdentity != null)
                 {
@@ -152,11 +142,17 @@ builder.Services.AddAuthentication(options =>
                         claimsIdentity.RemoveClaim(oldClaim);
                     }
                     claimsIdentity.AddClaim(new Claim("id_token", idToken));
+                    logger.LogInformation("IdToken added to user claims");
                 }
             }
+            else
+            {
+                logger.LogWarning("IdToken not found in TokenEndpointResponse");
+            }
             
-            // 必须继续执行默认处理
-            return Task.CompletedTask;
+            // 不需要手动调用 HandleCodeRedemptionAsync，让中间件自动处理
+            // 返回已完成的任务，让默认管道继续处理
+            return;
         },
         OnAuthenticationFailed = context =>
         {

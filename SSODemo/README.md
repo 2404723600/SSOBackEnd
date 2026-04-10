@@ -67,6 +67,9 @@ SSODemo/
 - **Access Type**: `confidential`（如果需要 client secret）或 `public`
 - **Valid Redirect URIs**: `https://localhost:7000/*`（根据实际运行端口配置）
 - **Web Origins**: `+`（允许所有 CORS）或指定具体域名
+- **Post Logout Redirect URIs**: `https://localhost:7000/*`（**重要**：登出后重定向地址，必须与代码中的 post_logout_redirect_uri 匹配）
+
+注意：Keycloak 17+ 版本在 "Settings" 标签页中有独立的 "Post logout redirect URIs" 字段；旧版本可能需要在 "Valid Redirect URIs" 中包含登出回调地址。
 
 ### 3. 配置客户端作用域
 确保客户端有以下 Mapper：
