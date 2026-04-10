@@ -1,0 +1,32 @@
+@{
+    ViewData["Title"] = "Profile";
+}
+
+<div class="text-center">
+    <h1 class="display-4">User Profile</h1>
+    <p class="lead">Your profile information from Keycloak SSO</p>
+</div>
+
+<div class="card mt-4">
+    <div class="card-body">
+        <h5 class="card-title">Authenticated User</h5>
+        <p class="card-text">Name: @User.FindFirst("name")?.Value ?? User.Identity?.Name</p>
+        <p class="card-text">Email: @User.FindFirst("email")?.Value</p>
+        <p class="card-text">User ID: @User.FindFirst("sub")?.Value</p>
+        
+        <hr />
+        
+        <h6>Your Roles:</h6>
+        <ul>
+            @foreach (var role in User.FindAll("roles").SelectMany(c => c.Value.Split(',')))
+            {
+                <li>@role</li>
+            }
+        </ul>
+    </div>
+</div>
+
+<div class="mt-4">
+    <a asp-action="Index" class="btn btn-secondary">Back to Home</a>
+    <a asp-action="Logout" class="btn btn-danger">Logout</a>
+</div>
