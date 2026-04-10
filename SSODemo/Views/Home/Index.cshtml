@@ -1,0 +1,59 @@
+@model SSODemo.Models.UserInfoViewModel
+@{
+    ViewData["Title"] = "Home - SSO Demo";
+}
+
+<div class="text-center">
+    <h1 class="display-4">Welcome to SSO Demo</h1>
+    <p class="lead">You are successfully authenticated via Keycloak!</p>
+</div>
+
+<div class="card mt-4">
+    <div class="card-header">
+        <h3>User Information</h3>
+    </div>
+    <div class="card-body">
+        <table class="table table-bordered">
+            <tr>
+                <th>Name:</th>
+                <td>@Model.Name</td>
+            </tr>
+            <tr>
+                <th>Email:</th>
+                <td>@Model.Email</td>
+            </tr>
+            <tr>
+                <th>User ID:</th>
+                <td>@Model.UserId</td>
+            </tr>
+            <tr>
+                <th>Roles:</th>
+                <td>@string.Join(", ", Model.Roles)</td>
+            </tr>
+        </table>
+        
+        <h4>All Claims</h4>
+        <table class="table table-sm table-striped">
+            <thead>
+                <tr>
+                    <th>Claim Type</th>
+                    <th>Claim Value</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var claim in Model.Claims)
+                {
+                    <tr>
+                        <td>@claim.Key</td>
+                        <td>@claim.Value</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<div class="mt-4">
+    <a asp-action="Logout" class="btn btn-danger">Logout</a>
+    <a asp-action="Profile" class="btn btn-primary">View Profile</a>
+</div>

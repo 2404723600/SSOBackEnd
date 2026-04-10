@@ -1,0 +1,12 @@
+@{
+    ViewData["Title"] = "Error";
+}
+
+<div class="text-center">
+    <h1 class="display-4 text-danger">Error</h1>
+    <p class="lead">@ViewBag.ErrorMessage</p>
+</div>
+
+<div class="mt-4">
+    <a asp-action="Index" class="btn btn-primary">Back to Home</a>
+</div>
