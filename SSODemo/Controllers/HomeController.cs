@@ -54,12 +54,22 @@ public class HomeController : Controller
         var authority = _configuration.GetSection("Keycloak")["Authority"];
         var logoutUrl = $"{authority}/protocol/openid-connect/logout";
         
+        // 获取 id_token_hint (从用户 Claims 中获取)
+        var idTokenHint = User.FindFirst("id_token")?.Value;
+        
         // 清除本地 Cookie
         await HttpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
         
         // 重定向到 Keycloak 登出端点，然后返回应用首页
         var redirectUri = Url.Action("Index", "Home", null, Request.Scheme, Request.Host.ToString());
+        
+        // 构建登出 URL，包含 id_token_hint 和 post_logout_redirect_uri
         var keycloakLogoutUrl = $"{logoutUrl}?post_logout_redirect_uri={Uri.EscapeDataString(redirectUri)}";
+        
+        if (!string.IsNullOrEmpty(idTokenHint))
+        {
+            keycloakLogoutUrl += $"&id_token_hint={Uri.EscapeDataString(idTokenHint)}";
+        }
         
         return Redirect(keycloakLogoutUrl);
     }
