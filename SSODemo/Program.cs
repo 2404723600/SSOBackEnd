@@ -79,13 +79,25 @@ builder.Services.AddAuthentication(options =>
     options.GetClaimsFromUserInfoEndpoint = true;
     options.SaveTokens = true;
     
-    // Events
+    // 保存 id_token 到 Claims，以便登出时使用
     options.Events = new OpenIdConnectEvents
     {
         OnTokenValidated = context =>
         {
             var logger = context.HttpContext.RequestServices.GetRequiredService<ILogger<Program>>();
             logger.LogInformation("Token validated for user: {Name}", context.Principal?.Identity?.Name);
+            
+            // 将 id_token 添加到 Claims 中
+            var idToken = context.ProtocolMessage.IdToken;
+            if (!string.IsNullOrEmpty(idToken))
+            {
+                var claimsIdentity = context.Principal?.Identity as ClaimsIdentity;
+                if (claimsIdentity != null)
+                {
+                    claimsIdentity.AddClaim(new Claim("id_token", idToken));
+                }
+            }
+            
             return Task.CompletedTask;
         },
         OnAuthenticationFailed = context =>
