@@ -10,10 +10,12 @@ namespace SSODemo.Controllers;
 public class HomeController : Controller
 {
     private readonly ILogger<HomeController> _logger;
+    private readonly IConfiguration _configuration;
 
-    public HomeController(ILogger<HomeController> logger)
+    public HomeController(ILogger<HomeController> logger, IConfiguration configuration)
     {
         _logger = logger;
+        _configuration = configuration;
     }
 
     [Authorize]
@@ -48,8 +50,18 @@ public class HomeController : Controller
 
     public async Task<IActionResult> Logout()
     {
+        // 构建 Keycloak 登出 URL
+        var authority = _configuration.GetSection("Keycloak")["Authority"];
+        var logoutUrl = $"{authority}/protocol/openid-connect/logout";
+        
+        // 清除本地 Cookie
         await HttpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
-        return RedirectToAction(nameof(Index), "Home");
+        
+        // 重定向到 Keycloak 登出端点，然后返回应用首页
+        var redirectUri = Url.Action("Index", "Home", null, Request.Scheme, Request.Host.ToString());
+        var keycloakLogoutUrl = $"{logoutUrl}?post_logout_redirect_uri={Uri.EscapeDataString(redirectUri)}";
+        
+        return Redirect(keycloakLogoutUrl);
     }
 
     [ResponseCache(Duration = 0, Location = ResponseCacheLocation.None, NoStore = true)]
