@@ -87,17 +87,75 @@ builder.Services.AddAuthentication(options =>
             var logger = context.HttpContext.RequestServices.GetRequiredService<ILogger<Program>>();
             logger.LogInformation("Token validated for user: {Name}", context.Principal?.Identity?.Name);
             
-            // 将 id_token 添加到 Claims 中
-            var idToken = context.ProtocolMessage.IdToken;
+            // 尝试多种方式获取 id_token
+            string? idToken = null;
+            
+            // 方法 1: 从 ProtocolMessage 获取
+            if (!string.IsNullOrEmpty(context.ProtocolMessage?.IdToken))
+            {
+                idToken = context.ProtocolMessage.IdToken;
+                logger.LogInformation("IdToken found in ProtocolMessage");
+            }
+            // 方法 2: 从保存的 tokens 中获取 (因为设置了 SaveTokens = true)
+            else
+            {
+                idToken = context.HttpContext.User.FindFirst("id_token")?.Value;
+                if (string.IsNullOrEmpty(idToken))
+                {
+                    var accessToken = context.HttpContext.User.FindFirst("access_token")?.Value;
+                    logger.LogInformation($"Access token present: {!string.IsNullOrEmpty(accessToken)}");
+                }
+            }
+            
+            // 如果还是没找到，尝试从 TokenEndpointResponse 获取（仅在授权码流程中可用）
+            // 注意：这需要在 OnAuthorizationCodeReceived 中处理
+            
             if (!string.IsNullOrEmpty(idToken))
             {
                 var claimsIdentity = context.Principal?.Identity as ClaimsIdentity;
                 if (claimsIdentity != null)
                 {
+                    // 移除旧的 id_token claim（如果有）
+                    var oldClaim = claimsIdentity.FindFirst("id_token");
+                    if (oldClaim != null)
+                    {
+                        claimsIdentity.RemoveClaim(oldClaim);
+                    }
+                    claimsIdentity.AddClaim(new Claim("id_token", idToken));
+                    logger.LogInformation("IdToken added to claims successfully");
+                }
+            }
+            else
+            {
+                logger.LogWarning("IdToken not found in any source. Logout may not work properly with Keycloak.");
+            }
+            
+            return Task.CompletedTask;
+        },
+        OnAuthorizationCodeReceived = async context =>
+        {
+            var logger = context.HttpContext.RequestServices.GetRequiredService<ILogger<Program>>();
+            
+            // 在授权码接收阶段，我们可以从 TokenEndpointResponse 获取 id_token
+            var idToken = context.TokenEndpointResponse?.IdToken;
+            
+            if (!string.IsNullOrEmpty(idToken))
+            {
+                logger.LogInformation("IdToken captured from TokenEndpointResponse");
+                
+                var claimsIdentity = context.Principal?.Identity as ClaimsIdentity;
+                if (claimsIdentity != null)
+                {
+                    var oldClaim = claimsIdentity.FindFirst("id_token");
+                    if (oldClaim != null)
+                    {
+                        claimsIdentity.RemoveClaim(oldClaim);
+                    }
                     claimsIdentity.AddClaim(new Claim("id_token", idToken));
                 }
             }
             
+            // 必须继续执行默认处理
             return Task.CompletedTask;
         },
         OnAuthenticationFailed = context =>
