@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authentication.OpenIdConnect;
@@ -8,8 +9,22 @@ var builder = WebApplication.CreateBuilder(args);
 // Add services to the container.
 builder.Services.AddControllersWithViews();
 
+builder.WebHost.ConfigureKestrel((context, options) =>
+{
+    // 应用 Limits 配置
+    var limits = context.Configuration.GetSection("Kestrel:Limits");
+    options.Limits.MaxRequestHeadersTotalSize = limits.GetValue<int>("MaxRequestHeadersTotalSize", 32768);
+    options.Limits.MaxRequestLineSize = limits.GetValue<int>("MaxRequestLineSize", 32768);
+    options.Limits.MaxRequestHeaderCount = limits.GetValue<int>("MaxRequestHeaderCount", 200);
+    options.Limits.MaxRequestBodySize = limits.GetValue<long>("MaxRequestBodySize", 52428800);
+    
+    // 开发环境日志
+    Console.WriteLine($"[Kestrel] MaxRequestHeadersTotalSize: {options.Limits.MaxRequestHeadersTotalSize}");
+});
+
 // Configure Keycloak SSO
 var keycloakSection = builder.Configuration.GetSection("Keycloak");
+var cookieName = keycloakSection["CookieName"];
 var authority = keycloakSection["Authority"] ?? throw new InvalidOperationException("Keycloak Authority is not configured");
 var audience = keycloakSection["Audience"] ?? "webapi1";
 var validAudiences = keycloakSection.GetSection("ValidAudiences").Get<string[]>() ?? new[] { audience };
@@ -24,11 +39,12 @@ builder.Services.AddAuthentication(options =>
 })
 .AddCookie(options =>
 {
-    options.Cookie.Name = "SSODemo.Auth";
+    options.Cookie.Name = cookieName;
     options.Cookie.SecurePolicy = CookieSecurePolicy.Always;
     options.Cookie.HttpOnly = true;
     options.ExpireTimeSpan = TimeSpan.FromHours(8);
     options.SlidingExpiration = true;
+    options.CookieManager = new ChunkingCookieManager();
     options.Events.OnValidatePrincipal = context =>
     {
         // Optional: Add custom principal validation logic here
@@ -38,7 +54,7 @@ builder.Services.AddAuthentication(options =>
 .AddOpenIdConnect(options =>
 {
     options.Authority = authority;
-    options.ClientId = "webapi1"; // Adjust based on your Keycloak client setup
+    options.ClientId = audience; // Adjust based on your Keycloak client setup
     options.ClientSecret = ""; // Set if using confidential client
     
     // Token validation parameters
@@ -70,9 +86,6 @@ builder.Services.AddAuthentication(options =>
     options.ResponseType = "code";
     options.Scope.Clear();
     options.Scope.Add("openid");
-    options.Scope.Add("profile");
-    options.Scope.Add("email");
-    options.Scope.Add("roles");
     
     // Claim mapping
     options.MapInboundClaims = true;
@@ -82,77 +95,45 @@ builder.Services.AddAuthentication(options =>
     // 保存 id_token 到 Claims，以便登出时使用
     options.Events = new OpenIdConnectEvents
     {
+        // 简化 OnAuthorizationCodeReceived
+        OnAuthorizationCodeReceived = context =>
+        {
+            var logger = context.HttpContext.RequestServices.GetRequiredService<ILogger<Program>>();
+            var idToken = context.TokenEndpointResponse?.IdToken;
+            if (!string.IsNullOrEmpty(idToken))
+                logger.LogInformation("IdToken captured (will be saved via SaveTokens=true)");
+            return Task.CompletedTask;
+        },
+
+// 简化 OnTokenValidated
         OnTokenValidated = context =>
         {
             var logger = context.HttpContext.RequestServices.GetRequiredService<ILogger<Program>>();
             logger.LogInformation("Token validated for user: {Name}", context.Principal?.Identity?.Name);
-            
-            // 尝试从 ProtocolMessage 获取 id_token（某些情况下可用）
-            string? idToken = context.ProtocolMessage?.IdToken;
-            
-            if (!string.IsNullOrEmpty(idToken))
+
+            // 精简 Claims：只保留必要的
+            var claimsIdentity = context.Principal?.Identity as ClaimsIdentity;
+            if (claimsIdentity != null)
             {
-                logger.LogInformation("IdToken found in ProtocolMessage");
-            }
-            else
-            {
-                // 如果 ProtocolMessage 中没有，尝试从 TokenEndpointResponse 获取
-                // 注意：在 TokenValidated 阶段，TokenEndpointResponse 可能已经处理过了
-                // 所以主要依赖 SaveTokens=true 自动保存到 Properties 中
-                logger.LogInformation("IdToken not in ProtocolMessage, will rely on SaveTokens mechanism");
-            }
-            
-            if (!string.IsNullOrEmpty(idToken))
-            {
-                var claimsIdentity = context.Principal?.Identity as ClaimsIdentity;
-                if (claimsIdentity != null)
+                // 这些类型通常很大，且不是每个应用都需要
+                var claimsToRemove = claimsIdentity.FindAll(c =>
+                        c.Type == "resource_access" ||
+                        c.Type == "realm_access" ||
+                        c.Type == "authorization" ||
+                        c.Type == "scope" ||
+                        c.Type == "azp" ||
+                        c.Type == "allowed-origins" ||
+                        c.Type == "aud" // 如果不需要多 audience 校验
+                ).ToList();
+        
+                foreach (var claim in claimsToRemove)
                 {
-                    // 移除旧的 id_token claim（如果有）
-                    var oldClaim = claimsIdentity.FindFirst("id_token");
-                    if (oldClaim != null)
-                    {
-                        claimsIdentity.RemoveClaim(oldClaim);
-                    }
-                    claimsIdentity.AddClaim(new Claim("id_token", idToken));
-                    logger.LogInformation("IdToken added to claims successfully");
+                    claimsIdentity.RemoveClaim(claim);
+                    logger.LogDebug("Removed claim: {Type}", claim.Type);
                 }
             }
-            
+    
             return Task.CompletedTask;
-        },
-        OnAuthorizationCodeReceived = async context =>
-        {
-            var logger = context.HttpContext.RequestServices.GetRequiredService<ILogger<Program>>();
-            
-            // 在授权码接收阶段，从 TokenEndpointResponse 获取 id_token
-            var idToken = context.TokenEndpointResponse?.IdToken;
-            
-            if (!string.IsNullOrEmpty(idToken))
-            {
-                logger.LogInformation("IdToken captured from TokenEndpointResponse: {IdTokenPrefix}", 
-                    idToken.Length > 20 ? idToken.Substring(0, 20) + "..." : idToken);
-                
-                // 将 id_token 添加到 Claims 中，以便后续登出时使用
-                var claimsIdentity = context.Principal?.Identity as ClaimsIdentity;
-                if (claimsIdentity != null)
-                {
-                    var oldClaim = claimsIdentity.FindFirst("id_token");
-                    if (oldClaim != null)
-                    {
-                        claimsIdentity.RemoveClaim(oldClaim);
-                    }
-                    claimsIdentity.AddClaim(new Claim("id_token", idToken));
-                    logger.LogInformation("IdToken added to user claims");
-                }
-            }
-            else
-            {
-                logger.LogWarning("IdToken not found in TokenEndpointResponse");
-            }
-            
-            // 不需要手动调用 HandleCodeRedemptionAsync，让中间件自动处理
-            // 返回已完成的任务，让默认管道继续处理
-            return;
         },
         OnAuthenticationFailed = context =>
         {
@@ -170,11 +151,23 @@ builder.Services.AddAuthentication(options =>
         }
     };
 });
-
 builder.Services.AddAuthorization();
 
 var app = builder.Build();
-
+// 🔥 绑定自定义 Endpoint（如果使用了 Endpoints 配置）
+var kestrelEndpoints = builder.Configuration.GetSection("Kestrel:Endpoints");
+if (kestrelEndpoints.Exists())
+{
+    foreach (var endpointSection in kestrelEndpoints.GetChildren())
+    {
+        var url = endpointSection["Url"];
+        if (!string.IsNullOrEmpty(url))
+        {
+            app.Urls.Add(url);
+            Console.WriteLine($"[Kestrel] Binding endpoint: {url}");
+        }
+    }
+}
 // Configure the HTTP request pipeline.
 if (!app.Environment.IsDevelopment())
 {
